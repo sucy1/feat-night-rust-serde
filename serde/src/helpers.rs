@@ -38,11 +38,22 @@ use crate::ser::{Serialize, Serializer};
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Deserialize a field, falling back to [`Default::default()`] when the field
-/// is missing or `null`.
+/// is `null` in the input.
 ///
 /// Use with `#[serde(with = "serde::helpers::with_default")]`. Unlike the
 /// standard `#[serde(default)]` attribute, this helper also converts an
 /// explicit `null` value (where supported by the format) into the default.
+///
+/// # Handling missing fields
+///
+/// This helper only handles `null` values that are **present** in the input.
+/// If the field is **entirely missing** from the input, you must also add
+/// `#[serde(default)]` alongside `with`:
+///
+/// ```ignore
+/// #[serde(with = "serde::helpers::with_default", default)]
+/// port: u16,
+/// ```
 ///
 /// # Examples
 ///
@@ -269,7 +280,7 @@ pub mod rename_all {
 
         for (i, ch) in input.char_indices() {
             if ch.is_uppercase() {
-                if i > 0 {
+                if i > 0 && out.chars().next_back() != Some('_') {
                     out.push('_');
                 }
                 for lower in ch.to_lowercase() {
@@ -291,6 +302,8 @@ pub mod rename_all {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- skip_empty: IsEmpty trait edge cases ----
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
@@ -317,6 +330,75 @@ mod tests {
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
+    fn skip_empty_whitespace_is_not_empty() {
+        assert!(!skip_empty::is_empty(&String::from(" ")));
+        assert!(!skip_empty::is_empty(&String::from("\t\n")));
+        assert!(!skip_empty::is_empty(&String::from("\u{00a0}")));
+    }
+
+    #[test]
+    fn skip_empty_str_whitespace_is_not_empty() {
+        assert!(!skip_empty::is_empty(" "));
+        assert!(!skip_empty::is_empty("\t"));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn skip_empty_ref_delegates() {
+        let s = String::from("hello");
+        assert!(!skip_empty::is_empty(&s));
+        assert!(!skip_empty::is_empty(&&s));
+
+        let empty_s = String::new();
+        assert!(skip_empty::is_empty(&empty_s));
+        assert!(skip_empty::is_empty(&&empty_s));
+    }
+
+    #[test]
+    fn skip_empty_ref_str_delegates() {
+        let s: &str = "x";
+        assert!(!skip_empty::is_empty(s));
+        assert!(!skip_empty::is_empty(&s as &dyn skip_empty::IsEmpty));
+
+        let empty: &str = "";
+        assert!(skip_empty::is_empty(empty));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn skip_empty_vec_zst() {
+        let empty: Vec<()> = Vec::new();
+        assert!(skip_empty::is_empty(&empty));
+
+        let full: Vec<()> = vec![(), (), ()];
+        assert!(!skip_empty::is_empty(&full));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn skip_empty_vec_single_element() {
+        let single: Vec<u8> = vec![0];
+        assert!(!skip_empty::is_empty(&single));
+    }
+
+    #[test]
+    fn skip_empty_slice_single_element() {
+        let single: &[i32] = &[42];
+        assert!(!skip_empty::is_empty(single));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn skip_empty_string_special_chars() {
+        assert!(!skip_empty::is_empty(&String::from("\0")));
+        assert!(!skip_empty::is_empty(&String::from("🦀")));
+        assert!(!skip_empty::is_empty(&String::from("0")));
+    }
+
+    // ---- rename_all: to_camel_case edge cases ----
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
     fn to_camel_case_basic() {
         assert_eq!(rename_all::to_camel_case("hello_world"), "helloWorld");
         assert_eq!(rename_all::to_camel_case("a_b_c"), "aBC");
@@ -326,12 +408,62 @@ mod tests {
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
-    fn to_camel_case_underscores() {
+    fn to_camel_case_leading_underscores() {
         assert_eq!(rename_all::to_camel_case("_leading"), "_leading");
         assert_eq!(rename_all::to_camel_case("__leading"), "__leading");
-        assert_eq!(rename_all::to_camel_case("a_"), "a_");
-        assert_eq!(rename_all::to_camel_case("a__b"), "aB");
+        assert_eq!(rename_all::to_camel_case("___a"), "___a");
     }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_trailing_underscore() {
+        assert_eq!(rename_all::to_camel_case("a_"), "a_");
+        assert_eq!(rename_all::to_camel_case("hello_"), "hello_");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_consecutive_underscores() {
+        assert_eq!(rename_all::to_camel_case("a__b"), "aB");
+        assert_eq!(rename_all::to_camel_case("a___b"), "aB");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_all_underscores() {
+        assert_eq!(rename_all::to_camel_case("___"), "___");
+        assert_eq!(rename_all::to_camel_case("_"), "_");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_with_numbers() {
+        assert_eq!(rename_all::to_camel_case("field1_name2"), "field1Name2");
+        assert_eq!(rename_all::to_camel_case("v2_api_url"), "v2ApiUrl");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_already_camel() {
+        assert_eq!(rename_all::to_camel_case("helloWorld"), "helloWorld");
+        assert_eq!(rename_all::to_camel_case("aBC"), "aBC");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_single_char() {
+        assert_eq!(rename_all::to_camel_case("a"), "a");
+        assert_eq!(rename_all::to_camel_case("z"), "z");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_case_uppercase_in_input() {
+        assert_eq!(rename_all::to_camel_case("XML_Request"), "XMLRequest");
+        assert_eq!(rename_all::to_camel_case("my_URL_parser"), "myURLParser");
+    }
+
+    // ---- rename_all: to_snake_case edge cases ----
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
@@ -346,12 +478,62 @@ mod tests {
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
+    fn to_snake_case_already_snake() {
+        assert_eq!(rename_all::to_snake_case("hello_world"), "hello_world");
+        assert_eq!(rename_all::to_snake_case("a_b_c"), "a_b_c");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_snake_case_all_uppercase() {
+        assert_eq!(rename_all::to_snake_case("ABC"), "a_b_c");
+        assert_eq!(rename_all::to_snake_case("XML"), "x_m_l");
+        assert_eq!(rename_all::to_snake_case("A"), "a");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_snake_case_with_numbers() {
+        assert_eq!(rename_all::to_snake_case("field1Name2"), "field1_name2");
+        assert_eq!(rename_all::to_snake_case("v2ApiUrl"), "v2_api_url");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_snake_case_mixed_underscore_uppercase() {
+        assert_eq!(rename_all::to_snake_case("_Hello"), "_hello");
+        assert_eq!(rename_all::to_snake_case("hello_World"), "hello_world");
+        assert_eq!(rename_all::to_snake_case("hello__World"), "hello__world");
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_snake_case_single_char() {
+        assert_eq!(rename_all::to_snake_case("a"), "a");
+        assert_eq!(rename_all::to_snake_case("Z"), "z");
+    }
+
+    // ---- rename_all: roundtrip ----
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
     fn roundtrip_rename_case() {
-        let words = &["hello_world", "user_name", "a_b_c", "single"];
+        let words = &["hello_world", "user_name", "a_b_c", "single", "field1_name2"];
         for w in words {
             let camel = rename_all::to_camel_case(w);
             let back = rename_all::to_snake_case(&camel);
             assert_eq!(&back, w);
+        }
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn to_camel_then_snake_is_idempotent() {
+        let inputs = &["helloWorld", "hello_world", "aBC", "single", "v2ApiUrl"];
+        for input in inputs {
+            let snake = rename_all::to_snake_case(input);
+            let again = rename_all::to_snake_case(&snake);
+            assert_eq!(&again, &snake);
         }
     }
 }
