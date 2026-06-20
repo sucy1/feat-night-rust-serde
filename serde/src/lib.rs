@@ -263,6 +263,8 @@ macro_rules! crate_root {
 
 crate_root!();
 
+pub mod helpers;
+
 mod integer128;
 
 // Re-export #[derive(Serialize, Deserialize)].
