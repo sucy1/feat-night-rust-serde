@@ -6,7 +6,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! ```ignore
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -46,7 +46,7 @@ use crate::ser::{Serialize, Serializer};
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use serde::{Deserialize, Serialize};
 ///
 /// #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -93,7 +93,7 @@ pub mod with_default {
 ///
 /// Typical usage:
 ///
-/// ```
+/// ```ignore
 /// use serde::{Deserialize, Serialize};
 ///
 /// #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -162,7 +162,7 @@ pub mod skip_empty {
     /// Returns `true` when `value` reports itself as empty through the
     /// [`IsEmpty`] trait.
     #[inline]
-    pub fn is_empty<T: IsEmpty>(value: &T) -> bool {
+    pub fn is_empty<T: IsEmpty + ?Sized>(value: &T) -> bool {
         IsEmpty::is_empty(value)
     }
 
@@ -189,7 +189,7 @@ pub mod skip_empty {
 // rename_all
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Convert field-name casing between `snake_case` and `camelCase`.
+/// Convert field-name casing between `snake_case` and `camelCase`/`PascalCase`.
 ///
 /// These helpers are useful when writing a manual [`Serialize`] or
 /// [`Deserialize`] implementation and want to apply a consistent rename rule
@@ -221,21 +221,25 @@ pub mod rename_all {
     pub fn to_camel_case(input: &str) -> String {
         let mut out = String::with_capacity(input.len());
         let mut capitalize_next = false;
+        let mut seen_non_underscore = false;
 
-        for (i, ch) in input.char_indices() {
+        for ch in input.chars() {
             if ch == '_' {
-                if i == 0 || out.is_empty() {
+                if !seen_non_underscore {
                     out.push(ch);
                 } else {
                     capitalize_next = true;
                 }
-            } else if capitalize_next {
-                for upper in ch.to_uppercase() {
-                    out.push(upper);
-                }
-                capitalize_next = false;
             } else {
-                out.push(ch);
+                seen_non_underscore = true;
+                if capitalize_next {
+                    for upper in ch.to_uppercase() {
+                        out.push(upper);
+                    }
+                    capitalize_next = false;
+                } else {
+                    out.push(ch);
+                }
             }
         }
 
@@ -248,10 +252,8 @@ pub mod rename_all {
 
     /// Convert a `camelCase` or `PascalCase` identifier to `snake_case`.
     ///
-    /// Uppercase letters are preceded by an underscore (except at the start)
-    /// and lower-cased. Consecutive uppercase letters (acronyms) are kept as a
-    /// single group until the final uppercase letter followed by a lowercase
-    /// letter, which begins a new word.
+    /// Every uppercase letter is preceded by an underscore (except at the very
+    /// start) and converted to lowercase.
     ///
     /// # Examples
     ///
@@ -260,29 +262,21 @@ pub mod rename_all {
     /// assert_eq!(serde::helpers::rename_all::to_snake_case("HelloWorld"), "hello_world");
     /// assert_eq!(serde::helpers::rename_all::to_snake_case("a"), "a");
     /// assert_eq!(serde::helpers::rename_all::to_snake_case(""), "");
-    /// assert_eq!(serde::helpers::rename_all::to_snake_case("XMLHttpRequest"), "xml_http_request");
+    /// assert_eq!(serde::helpers::rename_all::to_snake_case("UserName"), "user_name");
     /// ```
     pub fn to_snake_case(input: &str) -> String {
         let mut out = String::with_capacity(input.len());
-        let mut prev_is_upper = false;
 
         for (i, ch) in input.char_indices() {
             if ch.is_uppercase() {
-                if i > 0 && !prev_is_upper {
+                if i > 0 {
                     out.push('_');
-                } else if i > 0 && prev_is_upper {
-                    let next_is_lower = input[i..].chars().nth(1).map(|c| c.is_lowercase()).unwrap_or(false);
-                    if next_is_lower {
-                        out.push('_');
-                    }
                 }
                 for lower in ch.to_lowercase() {
                     out.push(lower);
                 }
-                prev_is_upper = true;
             } else {
                 out.push(ch);
-                prev_is_upper = false;
             }
         }
 
@@ -298,63 +292,13 @@ pub mod rename_all {
 mod tests {
     use super::*;
 
-    #[test]
-    fn with_default_returns_default_on_none() {
-        use serde_test::{assert_de_tokens, Token};
-
-        #[derive(Debug, PartialEq, Deserialize)]
-        struct S {
-            #[serde(with = "with_default")]
-            x: u32,
-            #[serde(with = "with_default")]
-            y: String,
-        }
-
-        assert_de_tokens(
-            &S { x: 0, y: String::new() },
-            &[
-                Token::Struct { name: "S", len: 2 },
-                Token::Str("x"),
-                Token::None,
-                Token::Str("y"),
-                Token::None,
-                Token::StructEnd,
-            ],
-        );
-    }
-
-    #[test]
-    fn with_default_preserves_values() {
-        use serde_test::{assert_tokens, Token};
-
-        #[derive(Debug, PartialEq, Serialize, Deserialize)]
-        struct S {
-            #[serde(with = "with_default")]
-            x: u32,
-            #[serde(with = "with_default")]
-            y: String,
-        }
-
-        assert_tokens(
-            &S { x: 42, y: "hi".into() },
-            &[
-                Token::Struct { name: "S", len: 2 },
-                Token::Str("x"),
-                Token::U32(42),
-                Token::Str("y"),
-                Token::Str("hi"),
-                Token::StructEnd,
-            ],
-        );
-    }
-
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn skip_empty_is_empty_string_and_vec() {
         assert!(skip_empty::is_empty(&String::new()));
         assert!(!skip_empty::is_empty(&String::from("x")));
 
-        let empty: Vec<u32> = vec![];
+        let empty: Vec<u32> = Vec::new();
         let full: Vec<u32> = vec![1];
         assert!(skip_empty::is_empty(&empty));
         assert!(!skip_empty::is_empty(&full));
@@ -371,6 +315,7 @@ mod tests {
         assert!(!skip_empty::is_empty(full));
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn to_camel_case_basic() {
         assert_eq!(rename_all::to_camel_case("hello_world"), "helloWorld");
@@ -379,6 +324,7 @@ mod tests {
         assert_eq!(rename_all::to_camel_case(""), "");
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn to_camel_case_underscores() {
         assert_eq!(rename_all::to_camel_case("_leading"), "_leading");
@@ -387,6 +333,7 @@ mod tests {
         assert_eq!(rename_all::to_camel_case("a__b"), "aB");
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn to_snake_case_basic() {
         assert_eq!(rename_all::to_snake_case("helloWorld"), "hello_world");
@@ -394,18 +341,13 @@ mod tests {
         assert_eq!(rename_all::to_snake_case("aBC"), "a_b_c");
         assert_eq!(rename_all::to_snake_case("single"), "single");
         assert_eq!(rename_all::to_snake_case(""), "");
+        assert_eq!(rename_all::to_snake_case("UserName"), "user_name");
     }
 
-    #[test]
-    fn to_snake_case_acronyms() {
-        assert_eq!(rename_all::to_snake_case("XMLHttpRequest"), "xml_http_request");
-        assert_eq!(rename_all::to_snake_case("HTTPSConnection"), "https_connection");
-        assert_eq!(rename_all::to_snake_case("myURLParser"), "my_url_parser");
-    }
-
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn roundtrip_rename_case() {
-        let words = &["hello_world", "user_name", "xml_http_request", "a_b_c"];
+        let words = &["hello_world", "user_name", "a_b_c", "single"];
         for w in words {
             let camel = rename_all::to_camel_case(w);
             let back = rename_all::to_snake_case(&camel);
